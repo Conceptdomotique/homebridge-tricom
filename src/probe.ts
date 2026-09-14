@@ -41,7 +41,8 @@ Options :
   --port <n>            Port du serveur jeedom               (défaut 9000)
   --timeout <s>         Timeout HTTP en secondes             (défaut 5)
   --interval <s>        Intervalle en mode --watch           (défaut 1)
-  --watch               Suit les changements en direct (Ctrl+C pour quitter)
+  --watch               Suit les changements en direct et, à l'arrêt (Ctrl+C),
+                        produit la config des seules sorties ayant bougé
   --config              Affiche un bloc "accessories" prêt à coller
   --json                Sort le JSON brut de la centrale
   --codes               Compare les réponses de la centrale à plusieurs clés,
@@ -188,6 +189,35 @@ export function renderConfig(values: ExoValues): string {
   return JSON.stringify({ accessories }, null, 2);
 }
 
+/**
+ * The central reports its whole address space — typically 16 EXO modules of
+ * 8 outputs — whether or not anything is wired to each one. A dump where
+ * everything reads 0 therefore says nothing about which outputs exist, so
+ * generating 128 accessories from it would be worse than useless.
+ */
+export function configAdvice(values: ExoValues): string[] {
+  const rows = flatten(values);
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const live = rows.filter(r => r.value > 0);
+  if (live.length > 0) {
+    return [
+      `${live.length} sortie(s) sur ${rows.length} sont actives ; le type des autres est `
+      + 'deviné « switch » faute de mieux. Relisez et renommez avant de coller.',
+    ];
+  }
+
+  return [
+    `Les ${rows.length} sorties lues sont toutes à 0. La centrale expose tout son espace `
+    + 'd\'adressage, pas seulement les sorties réellement câblées : ce bloc ne distingue',
+    'donc ni les sorties existantes, ni leur type. Utilisez plutôt --watch, actionnez vos',
+    'équipements un par un, et quittez par Ctrl+C : la config sera construite à partir des',
+    'seules sorties qui auront bougé.',
+  ];
+}
+
 /** Différences entre deux relevés, pour le mode --watch. */
 export function diff(previous: ExoValues, current: ExoValues): string[] {
   const changes: string[] = [];
@@ -206,6 +236,84 @@ export function diff(previous: ExoValues, current: ExoValues): string[] {
     );
   }
   return changes;
+}
+
+/**
+ * Ce qu'on a vu bouger pendant une session --watch : pour chaque sortie, les
+ * valeurs distinctes observées, dans l'ordre d'apparition.
+ */
+export type Observations = Map<string, number[]>;
+
+/** Note les valeurs prises par les sorties qui ont changé entre deux relevés. */
+export function recordChanges(
+  seen: Observations,
+  previous: ExoValues,
+  current: ExoValues,
+): void {
+  for (const row of flatten(current)) {
+    const key = `${row.exo}:${row.output}`;
+    const before = previous[row.exo]?.[row.output];
+    if (before === undefined || Number(before) === row.value) {
+      continue;
+    }
+    const values = seen.get(key) ?? [];
+    if (!values.includes(row.value)) {
+      values.push(row.value);
+    }
+    // La valeur de départ compte aussi : elle dit ce qu'était l'état avant.
+    if (!values.includes(Number(before))) {
+      values.unshift(Number(before));
+    }
+    seen.set(key, values);
+  }
+}
+
+/**
+ * Déduit la configuration d'une sortie des valeurs qu'on lui a vu prendre.
+ * Bien plus fiable qu'une lecture unique : une sortie vue à 0 puis 1 est un
+ * interrupteur dont l'allumage vaut 1, pas 255 ; une sortie vue à plusieurs
+ * niveaux non nuls est un variateur.
+ */
+export function describeObserved(
+  exo: string,
+  output: string,
+  values: number[],
+): Record<string, unknown> {
+  const nonZero = [...new Set(values.filter(v => v > 0))];
+  const base: Record<string, unknown> = {
+    name: `EXO${exo} sortie ${output}`,
+    type: 'switch',
+    exoAddress: Number(exo),
+    outputNbr: Number(output),
+  };
+
+  if (nonZero.length > 1) {
+    base.type = 'dimmer';
+    base.maxValue = Math.max(...nonZero) > 100 ? 255 : 100;
+    return base;
+  }
+
+  // Un seul niveau d'allumage observé : interrupteur. On ne précise onValue
+  // que s'il diffère du 255 par défaut.
+  if (nonZero.length === 1 && nonZero[0] !== 255) {
+    base.onValue = nonZero[0];
+  }
+  return base;
+}
+
+/** Bloc "accessories" construit à partir des seules sorties observées. */
+export function observedConfig(seen: Observations): string {
+  const accessories = [...seen.entries()]
+    .sort((a, b) => {
+      const [ae, ao] = a[0].split(':').map(Number);
+      const [be, bo] = b[0].split(':').map(Number);
+      return ae - be || ao - bo;
+    })
+    .map(([key, values]) => {
+      const [exo, output] = key.split(':');
+      return describeObserved(exo, output, values);
+    });
+  return JSON.stringify({ accessories }, null, 2);
 }
 
 /** Une clé factice de longueur donnée, pour distinguer « clé fausse » de « clé trop longue ». */
@@ -377,6 +485,9 @@ async function main(): Promise<number> {
   }
 
   if (opts.config) {
+    for (const note of configAdvice(values)) {
+      console.log('// ' + note);
+    }
     console.log('// À coller dans la plateforme Tricom de votre config.json :');
     console.log(renderConfig(values));
     return 0;
@@ -386,14 +497,22 @@ async function main(): Promise<number> {
   console.log(renderTable(values));
 
   if (opts.watch) {
-    console.log('\nMode suivi — actionnez un équipement pour repérer sa sortie. Ctrl+C pour quitter.\n');
+    console.log('');
+    console.log('Mode suivi. Actionnez vos équipements un par un — chaque sortie qui bouge');
+    console.log('est enregistrée. Pour un variateur, balayez toute la plage : la config');
+    console.log('sera d\'autant plus juste. Ctrl+C pour arrêter et obtenir le bloc.');
+    console.log('');
+
+    const seen: Observations = new Map();
     let previous = values;
+
     const timer = setInterval(async () => {
       try {
         const current = await client.getAllValues();
         for (const line of diff(previous, current)) {
           console.log(`[${new Date().toLocaleTimeString()}] ${line}`);
         }
+        recordChanges(seen, previous, current);
         previous = current;
       } catch (e) {
         console.error(`Lecture échouée : ${(e as Error).message}`);
@@ -403,10 +522,18 @@ async function main(): Promise<number> {
     await new Promise<void>(resolve => {
       process.on('SIGINT', () => {
         clearInterval(timer);
-        console.log('\nArrêt.');
         resolve();
       });
     });
+
+    if (seen.size === 0) {
+      console.log('\nAucune sortie n\'a bougé — rien à proposer.');
+      return 0;
+    }
+
+    console.log(`\n${seen.size} sortie(s) ont bougé. Bloc à coller dans votre config.json,`);
+    console.log('à renommer selon les pièces :\n');
+    console.log(observedConfig(seen));
   }
 
   return 0;

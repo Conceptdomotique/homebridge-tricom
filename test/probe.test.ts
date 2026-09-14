@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  CodeProbeResult, diff, dummyKey, flatten, guessType, interpretErrorCodes,
-  parseArgs, probeErrorCodes, renderConfig, renderErrorCodes, renderTable,
+  CodeProbeResult, Observations, configAdvice, describeObserved, diff, dummyKey,
+  flatten, guessType, interpretErrorCodes, observedConfig, parseArgs,
+  probeErrorCodes, recordChanges, renderConfig, renderErrorCodes, renderTable,
 } from '../src/probe';
 import { startMockTricom, MockTricomServer } from './helpers/tricomServer';
 
@@ -110,6 +111,125 @@ describe('renderConfig', () => {
   it('guesses a 0-255 scale when the level exceeds 100', () => {
     const parsed = JSON.parse(renderConfig({ '1': { '1': 180 } }));
     expect(parsed.accessories[0].maxValue).toBe(255);
+  });
+});
+
+/** Une centrale qui expose tout son espace d'adressage, tout à 0. */
+function fullAddressSpace(): Record<string, Record<string, number>> {
+  const values: Record<string, Record<string, number>> = {};
+  for (let exo = 1; exo <= 16; exo++) {
+    values[String(exo)] = {};
+    for (let out = 1; out <= 8; out++) {
+      values[String(exo)][String(out)] = 0;
+    }
+  }
+  return values;
+}
+
+describe('configAdvice', () => {
+  it('warns that an all-zero dump says nothing about which outputs exist', () => {
+    const notes = configAdvice(fullAddressSpace()).join(' ');
+    expect(notes).toMatch(/128 sorties lues sont toutes à 0/);
+    expect(notes).toMatch(/espace d'adressage/);
+    expect(notes).toMatch(/--watch/);
+  });
+
+  it('counts the live outputs when some are on', () => {
+    expect(configAdvice({ '1': { '1': 255, '2': 0 } }).join(' ')).toMatch(/1 sortie\(s\) sur 2/);
+  });
+
+  it('says nothing for an empty reading', () => {
+    expect(configAdvice({})).toEqual([]);
+  });
+});
+
+describe('recordChanges', () => {
+  it('records an output that moved, with both values', () => {
+    const seen: Observations = new Map();
+    recordChanges(seen, { '1': { '1': 0 } }, { '1': { '1': 255 } });
+    expect(seen.get('1:1')).toEqual([0, 255]);
+  });
+
+  it('ignores outputs that did not move', () => {
+    const seen: Observations = new Map();
+    recordChanges(seen, { '1': { '1': 0, '2': 0 } }, { '1': { '1': 255, '2': 0 } });
+    expect([...seen.keys()]).toEqual(['1:1']);
+  });
+
+  it('accumulates every distinct level across successive polls', () => {
+    const seen: Observations = new Map();
+    recordChanges(seen, { '2': { '1': 0 } }, { '2': { '1': 40 } });
+    recordChanges(seen, { '2': { '1': 40 } }, { '2': { '1': 80 } });
+    recordChanges(seen, { '2': { '1': 80 } }, { '2': { '1': 0 } });
+    expect(seen.get('2:1')).toEqual([0, 40, 80]);
+  });
+
+  it('does not record an output seen for the first time', () => {
+    const seen: Observations = new Map();
+    recordChanges(seen, {}, { '1': { '1': 255 } });
+    expect(seen.size).toBe(0);
+  });
+});
+
+describe('describeObserved', () => {
+  it('calls a two-state output a switch', () => {
+    expect(describeObserved('1', '2', [0, 255])).toEqual({
+      name: 'EXO1 sortie 2', type: 'switch', exoAddress: 1, outputNbr: 2,
+    });
+  });
+
+  it('captures an on value that is not the default 255', () => {
+    expect(describeObserved('1', '2', [0, 1])).toMatchObject({ type: 'switch', onValue: 1 });
+  });
+
+  it('omits onValue when the hardware uses the default', () => {
+    expect(describeObserved('1', '2', [0, 255])).not.toHaveProperty('onValue');
+  });
+
+  it('calls an output with several levels a dimmer', () => {
+    expect(describeObserved('2', '1', [0, 40, 80])).toMatchObject({
+      type: 'dimmer', maxValue: 100,
+    });
+  });
+
+  it('infers a 0-255 scale from a level above 100', () => {
+    expect(describeObserved('2', '1', [0, 128, 255])).toMatchObject({ maxValue: 255 });
+  });
+});
+
+describe('observedConfig', () => {
+  it('emits only the outputs that were seen moving', () => {
+    const seen: Observations = new Map([['3:5', [0, 255]], ['1:2', [0, 1]]]);
+    const parsed = JSON.parse(observedConfig(seen));
+    expect(parsed.accessories).toHaveLength(2);
+  });
+
+  it('sorts by EXO then output, numerically', () => {
+    const seen: Observations = new Map([['10:1', [0, 1]], ['2:3', [0, 1]], ['2:1', [0, 1]]]);
+    const parsed = JSON.parse(observedConfig(seen));
+    expect(parsed.accessories.map((a: { name: string }) => a.name)).toEqual([
+      'EXO2 sortie 1', 'EXO2 sortie 3', 'EXO10 sortie 1',
+    ]);
+  });
+
+  it('turns a walk-around session into a pasteable block', () => {
+    const seen: Observations = new Map();
+    // Un interrupteur en 0/255, une prise en 0/1, un variateur balayé.
+    recordChanges(seen, { '1': { '1': 0 } }, { '1': { '1': 255 } });
+    recordChanges(seen, { '1': { '2': 0 } }, { '1': { '2': 1 } });
+    recordChanges(seen, { '2': { '1': 0 } }, { '2': { '1': 60 } });
+    recordChanges(seen, { '2': { '1': 60 } }, { '2': { '1': 100 } });
+
+    const parsed = JSON.parse(observedConfig(seen));
+    expect(parsed.accessories).toEqual([
+      { name: 'EXO1 sortie 1', type: 'switch', exoAddress: 1, outputNbr: 1 },
+      { name: 'EXO1 sortie 2', type: 'switch', exoAddress: 1, outputNbr: 2, onValue: 1 },
+      { name: 'EXO2 sortie 1', type: 'dimmer', exoAddress: 2, outputNbr: 1, maxValue: 100 },
+    ]);
+  });
+
+  it('produces an empty block when nothing moved', () => {
+    expect(JSON.parse(observedConfig(new Map())).accessories).toEqual([]);
   });
 });
 

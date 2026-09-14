@@ -73,18 +73,25 @@ Centrale http://192.168.1.50:9000
   3 sortie(s) sur 2 module(s) EXO.
 ```
 
-**Mode suivi** — le plus pratique sur site : lancez le suivi, puis actionnez physiquement un interrupteur. La ligne qui bouge vous donne l'adresse EXO et le numéro de sortie à mettre dans la configuration.
+La centrale expose **tout son espace d'adressage** — typiquement 16 modules EXO de 8 sorties, soit 128 lignes — qu'un équipement soit câblé ou non. Une lecture simple ne dit donc pas quelles sorties existent réellement. C'est le mode suivi qui répond à cette question.
+
+**Mode suivi** — la méthode recommandée. Lancez-le, faites le tour de l'installation en actionnant vos équipements un par un, puis quittez par Ctrl+C : le bloc de configuration est construit à partir des seules sorties qui ont bougé.
 
 ```bash
 npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --watch
 ```
 
 ```
-[14:32:07] EXO 1 sortie 2 : 255 → 0  (off)
-[14:32:11] EXO 2 sortie 1 : 40 → 80  (ON)
+[14:32:07] EXO 1 sortie 2 : 0 → 255  (ON)
+[14:32:11] EXO 2 sortie 1 : 0 → 40   (ON)
+[14:32:14] EXO 2 sortie 1 : 40 → 80  (ON)
+^C
+3 sortie(s) ont bougé. Bloc à coller dans votre config.json, à renommer selon les pièces :
 ```
 
-**Bloc de configuration** — génère un `accessories` prêt à coller, avec un type deviné d'après les valeurs lues (une sortie à 40 est supposée variable, une sortie à 0/1/255 est supposée tout-ou-rien). À relire et à renommer, évidemment.
+Les types sont déduits de ce qui a été observé, pas devinés : une sortie vue à deux états est un interrupteur, et son `onValue` est repris tel quel s'il ne vaut pas 255 ; une sortie vue à plusieurs niveaux est un variateur, dont l'échelle (`maxValue` 100 ou 255) se déduit des valeurs atteintes. Pour un variateur, balayez toute la plage : la configuration n'en sera que plus juste.
+
+**Bloc de configuration à partir d'une lecture simple** — utile seulement si des équipements sont déjà allumés au moment du relevé, puisque les types sont alors devinés d'après une valeur unique.
 
 ```bash
 npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --config

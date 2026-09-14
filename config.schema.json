@@ -1,0 +1,100 @@
+{
+  "pluginAlias": "Tricom",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Contrôle d'une centrale domotique Tricom (sorties EXO) dans HomeKit.",
+  "footerDisplay": "Réécriture native du plugin Jeedom Tricom. Chaque accessoire correspond à une sortie d'un module EXO.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Nom de la plateforme",
+        "type": "string",
+        "default": "Tricom",
+        "required": true
+      },
+      "ip": {
+        "title": "Adresse IP de la Tricom",
+        "type": "string",
+        "format": "ipv4",
+        "default": "127.0.0.1",
+        "required": true
+      },
+      "port": {
+        "title": "Port Tricom (Jeedom)",
+        "type": "integer",
+        "default": 9000,
+        "required": true
+      },
+      "apikey": {
+        "title": "Clé API",
+        "type": "string",
+        "required": true,
+        "description": "Clé API attendue par le serveur Tricom (équivalent de jeedom::getApiKey())."
+      },
+      "pollInterval": {
+        "title": "Intervalle d'interrogation (secondes)",
+        "type": "integer",
+        "default": 5,
+        "minimum": 2,
+        "required": false
+      },
+      "timeout": {
+        "title": "Timeout HTTP (secondes)",
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "required": false
+      },
+      "accessories": {
+        "title": "Sorties",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Nom",
+              "type": "string",
+              "required": true
+            },
+            "type": {
+              "title": "Type",
+              "type": "string",
+              "default": "switch",
+              "oneOf": [
+                { "title": "Interrupteur", "enum": ["switch"] },
+                { "title": "Lumière (on/off)", "enum": ["light"] },
+                { "title": "Variateur", "enum": ["dimmer"] }
+              ],
+              "required": true
+            },
+            "exoAddress": {
+              "title": "Adresse EXO",
+              "type": "integer",
+              "required": true
+            },
+            "outputNbr": {
+              "title": "Numéro de sortie",
+              "type": "integer",
+              "required": true
+            },
+            "onValue": {
+              "title": "Valeur ON (interrupteur/lumière)",
+              "type": "integer",
+              "default": 255,
+              "required": false,
+              "description": "Valeur envoyée à l'allumage. Le template Jeedom utilisait 255."
+            },
+            "maxValue": {
+              "title": "Valeur max (variateur)",
+              "type": "integer",
+              "default": 100,
+              "required": false,
+              "description": "Valeur correspondant à 100% de luminosité. À ajuster selon votre matériel (souvent 100 ou 255)."
+            }
+          }
+        }
+      }
+    }
+  }
+}

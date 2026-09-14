@@ -1,7 +1,7 @@
 {
   "displayName": "Homebridge Tricom",
   "name": "homebridge-tricom",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Homebridge plugin to control a Tricom home-automation central (EXO outputs) in HomeKit. Native rewrite of the Jeedom Tricom plugin.",
   "license": "AGPL-3.0",
   "author": "Adapted from the Jeedom Tricom plugin (FJ&RS)",

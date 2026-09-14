@@ -6,6 +6,14 @@
 
 Plugin [Homebridge](https://homebridge.io) qui expose dans HomeKit les sorties d'une centrale domotique **Tricom**. Il s'agit d'une réécriture native (Node.js / TypeScript) du plugin Jeedom [`TricomPlugIn`](https://github.com/anb-rimex/TricomPlugIn) : la logique de dialogue avec la centrale est reprise telle quelle, mais l'interface Jeedom (PHP, base de données, widgets) est remplacée par le modèle d'accessoires HomeKit.
 
+## État du projet
+
+Version `0.x` : le plugin est publié tôt pour permettre les tests sur le terrain, et la forme de la configuration peut encore changer.
+
+**Vérifié contre une centrale TriCom réelle** : le dialogue HTTP, la construction des URL, l'authentification par clé API, la détection des réponses d'erreur, et la lecture complète de l'état des sorties.
+
+**Pas encore vérifié sur du matériel** : l'écriture d'une sortie (`exoOutputValue`), et la sémantique des valeurs — le `255` envoyé à l'allumage, la correspondance entre le pourcentage HomeKit et la valeur brute d'un variateur. Ces points sont repris tels quels du plugin Jeedom d'origine, faute d'avoir eu des modules EXO câblés à disposition. Si vous en avez, la sortie de `tricom-probe --watch` sur une [issue](https://github.com/Conceptdomotique/homebridge-tricom/issues) est précisément ce qui manque pour les confirmer.
+
 ## Comment ça marche
 
 Le plugin Jeedom communiquait avec un serveur HTTP « jeedom » exposé par la Tricom via deux appels, que ce plugin reproduit à l'identique :

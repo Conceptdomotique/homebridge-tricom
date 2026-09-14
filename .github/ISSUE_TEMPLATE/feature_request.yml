@@ -1,0 +1,20 @@
+name: Demande de fonctionnalité
+description: Proposer une amélioration ou un nouveau type d'accessoire
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Besoin
+      description: Quel usage n'est pas couvert aujourd'hui ?
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Matériel concerné
+      description: >
+        Type de module EXO, et si possible les valeurs renvoyées par
+        `tricom-probe --ip <adresse> --apikey <cle> --watch` quand vous
+        actionnez l'équipement.

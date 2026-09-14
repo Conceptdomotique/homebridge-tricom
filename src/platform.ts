@@ -90,7 +90,7 @@ export class TricomPlatform implements DynamicPlatformPlugin {
 
     for (const dev of configured) {
       if (dev.exoAddress === undefined || dev.outputNbr === undefined || !dev.name) {
-        this.log.warn(`Skipping an accessory — "name", "exoAddress" and "outputNbr" are required.`);
+        this.log.warn('Skipping an accessory — "name", "exoAddress" and "outputNbr" are required.');
         continue;
       }
 

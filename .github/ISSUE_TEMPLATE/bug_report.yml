@@ -1,0 +1,54 @@
+name: Rapport de bug
+description: Signaler un problème avec le plugin
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Description du problème
+      description: Ce qui se passe, et ce que vous attendiez à la place.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Journal Homebridge
+      description: >
+        Extrait du log au moment du problème. Activez le mode debug
+        (Homebridge → Paramètres → Debug) pour plus de détail.
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration de la plateforme Tricom
+      description: Votre bloc de config **sans la clé API**.
+      render: json
+
+  - type: textarea
+    id: probe
+    attributes:
+      label: Sortie de `tricom-probe`
+      description: >
+        Résultat de `npx tricom-probe --ip <adresse> --apikey <cle>`.
+        Cela indique ce que la centrale renvoie réellement.
+      render: shell
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: "plugin 1.0.0 — Homebridge 1.8.4 — Node 20.18.0 — Raspberry Pi OS"
+    validations:
+      required: true

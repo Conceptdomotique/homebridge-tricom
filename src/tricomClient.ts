@@ -58,7 +58,7 @@ export class TricomClient {
     const body = await this.get('/allExosOutputsValues');
     try {
       return JSON.parse(body) as ExoValues;
-    } catch (e) {
+    } catch {
       throw new Error(`Invalid JSON from Tricom: ${body.slice(0, 120)}`);
     }
   }

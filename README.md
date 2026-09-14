@@ -1,5 +1,9 @@
 # homebridge-tricom
 
+[![build](https://github.com/Conceptdomotique/homebridge-tricom/actions/workflows/build.yml/badge.svg)](https://github.com/Conceptdomotique/homebridge-tricom/actions/workflows/build.yml)
+[![npm](https://img.shields.io/npm/v/homebridge-tricom.svg)](https://www.npmjs.com/package/homebridge-tricom)
+[![licence](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](./LICENSE)
+
 Plugin [Homebridge](https://homebridge.io) qui expose dans HomeKit les sorties d'une centrale domotique **Tricom**. Il s'agit d'une réécriture native (Node.js / TypeScript) du plugin Jeedom [`TricomPlugIn`](https://github.com/anb-rimex/TricomPlugIn) : la logique de dialogue avec la centrale est reprise telle quelle, mais l'interface Jeedom (PHP, base de données, widgets) est remplacée par le modèle d'accessoires HomeKit.
 
 ## Comment ça marche
@@ -25,6 +29,54 @@ Ou, depuis les sources :
 npm install
 npm run build
 ```
+
+## Trouver ses sorties avec `tricom-probe`
+
+Le plugin ne peut pas découvrir les équipements tout seul : la centrale n'expose pas de liste, il faut déclarer chaque sortie à la main. L'outil `tricom-probe`, installé avec le plugin, sert à repérer quelle sortie correspond à quel équipement.
+
+```bash
+# État de toutes les sorties de la centrale
+npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE
+```
+
+```
+Centrale http://192.168.1.50:9000
+
+  EXO  Sortie   Valeur  État
+  ---  ------   ------  ----
+    1       1        0  off
+    1       2      255  ON
+    2       1       40  ON
+
+  3 sortie(s) sur 2 module(s) EXO.
+```
+
+**Mode suivi** — le plus pratique sur site : lancez le suivi, puis actionnez physiquement un interrupteur. La ligne qui bouge vous donne l'adresse EXO et le numéro de sortie à mettre dans la configuration.
+
+```bash
+npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --watch
+```
+
+```
+[14:32:07] EXO 1 sortie 2 : 255 → 0  (off)
+[14:32:11] EXO 2 sortie 1 : 40 → 80  (ON)
+```
+
+**Bloc de configuration** — génère un `accessories` prêt à coller, avec un type deviné d'après les valeurs lues (une sortie à 40 est supposée variable, une sortie à 0/1/255 est supposée tout-ou-rien). À relire et à renommer, évidemment.
+
+```bash
+npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --config
+```
+
+**Écrire une valeur** — pour vérifier l'échelle d'un variateur sans passer par HomeKit :
+
+```bash
+npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --set 2:1=128
+```
+
+Si la sortie s'allume à mi-puissance, l'échelle est 0–255 (`maxValue: 255`). Si elle est à fond, l'échelle est 0–100 (`maxValue: 100`).
+
+Toutes les options : `npx tricom-probe --help`.
 
 ## Configuration
 
@@ -95,13 +147,33 @@ Dans le plugin Jeedom, l'allumage d'un interrupteur envoyait la valeur `255` et 
 
 Pour les **variateurs**, la correspondance entre le pourcentage de luminosité HomeKit (0–100 %) et la valeur brute envoyée à la Tricom dépend de votre matériel. Par défaut, `maxValue` vaut `100` (mapping direct 0–100). Si vos sorties de variation attendent une échelle 0–255, réglez `maxValue` à `255`. Ajustez ce paramètre en observant les valeurs renvoyées par `allExosOutputsValues`.
 
+## Dépannage
+
+| Symptôme | Piste |
+| --- | --- |
+| Les accessoires restent « Sans réponse » dans HomeKit | La centrale est injoignable ou la clé API est refusée. Vérifiez avec `tricom-probe` : il utilise exactement les mêmes appels que le plugin. |
+| Un accessoire ne réagit pas | Mauvais couple adresse EXO / numéro de sortie. Utilisez `--watch` et actionnez l'équipement pour retrouver le bon. |
+| Un variateur saute à 100 % dès qu'on le bouge | L'échelle ne correspond pas. Essayez `maxValue: 255` (ou testez avec `--set`). |
+| Un interrupteur s'allume mais HomeKit le croit éteint | La centrale renvoie 0 pour cette sortie. Vérifiez la valeur lue avec `tricom-probe`. |
+| Journal muet | Activez le mode debug dans Homebridge : le plugin trace chaque écriture et chaque échec d'interrogation. |
+
 ## Développement
 
 ```bash
-npm install      # installe les dépendances
-npm run build    # compile TypeScript -> dist/
-npm run watch    # recompilation à la volée
+npm install          # installe les dépendances
+npm run build        # compile TypeScript -> dist/
+npm run watch        # recompilation à la volée
+npm run lint         # ESLint
+npm test             # suite de tests (vitest)
+npm run test:coverage  # tests + couverture
+npm run check        # lint + build + tests, comme la CI
 ```
+
+Les tests tournent contre un faux serveur Tricom et un HAP simulé : aucune centrale n'est nécessaire pour les lancer.
+
+## Contribuer
+
+Les rapports de bug et les demandes de fonctionnalité passent par les [issues GitHub](https://github.com/Conceptdomotique/homebridge-tricom/issues). Joignez la sortie de `tricom-probe` : c'est ce qui permet de savoir ce que la centrale renvoie réellement.
 
 ## Différences avec le plugin Jeedom
 

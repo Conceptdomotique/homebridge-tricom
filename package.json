@@ -5,6 +5,7 @@
   "description": "Homebridge plugin to control a Tricom home-automation central (EXO outputs) in HomeKit. Native rewrite of the Jeedom Tricom plugin.",
   "license": "AGPL-3.0",
   "author": "Adapted from the Jeedom Tricom plugin (FJ&RS)",
+  "homepage": "https://github.com/Conceptdomotique/homebridge-tricom#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Conceptdomotique/homebridge-tricom.git"
@@ -13,26 +14,49 @@
     "url": "https://github.com/Conceptdomotique/homebridge-tricom/issues"
   },
   "main": "dist/index.js",
+  "bin": {
+    "tricom-probe": "dist/probe.js"
+  },
+  "files": [
+    "dist",
+    "config.schema.json",
+    "config.sample.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "engines": {
-    "node": ">=18.0.0",
-    "homebridge": ">=1.6.0 || ^2.0.0-beta.0"
+    "node": "^18.20.4 || ^20.18.0 || ^22.10.0",
+    "homebridge": "^1.8.0 || ^2.0.0-beta.0"
   },
   "keywords": [
     "homebridge-plugin",
     "tricom",
     "jeedom",
     "homekit",
-    "domotique"
+    "domotique",
+    "exo"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "rimraf dist && tsc",
     "watch": "tsc --watch",
-    "prepublishOnly": "npm run build"
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run lint && npm run build && npm run test",
+    "prepublishOnly": "npm run check"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^20.11.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^9.39.5",
     "homebridge": "^1.8.0",
-    "typescript": "^5.4.0"
+    "rimraf": "^5.0.10",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^2.1.9"
   }
 }

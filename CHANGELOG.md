@@ -13,7 +13,8 @@ et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Ajouté
 - `tricom-probe --codes` : compare les réponses de la centrale à plusieurs clés (fournie, absente, trop courte, fausse en 50 et 64 caractères) et à un endpoint inconnu, pour déterminer empiriquement ce que ses codes `ERROR` distinguent — AnB-Rimex n'en publie pas la table. Lectures seules, aucune écriture.
-- Section « La clé API » dans le README : d'où vient la clé, pourquoi elle se saisit dans le logiciel TRINITY d'AnB-Rimex, et la limite historique de 50 caractères.
+- `--codes` interprète le tableau au lieu de le laisser brut : il conclut si le serveur HTTP est actif, si la centrale distingue plusieurs causes de refus, et ce qu'il reste à faire.
+- Section « La clé API » dans le README : d'où vient la clé, pourquoi elle se saisit dans le logiciel TRINITY d'AnB-Rimex, la limite historique de 50 caractères, et ce qu'on a pu établir de `ERROR 9001` en le mesurant sur une centrale réelle (clé absente, trop courte, fausse en 50 ou en 64 caractères : même code — il signifie « clé non reconnue », sans distinction de longueur). Un endpoint inconnu renvoie la page d'accueil du serveur sans vérifier la clé, ce qui donne un test de vie sans clé.
 
 ### Modifié
 - Le premier échec d'interrogation est journalisé en `warn` (et en `error` avec l'explication du code quand la centrale refuse la requête) plutôt qu'en `debug` : une erreur de configuration est visible sans activer le mode debug. Les échecs suivants retombent en `debug` pour ne pas inonder le journal, et le retour de la centrale est signalé.

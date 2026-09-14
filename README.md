@@ -38,13 +38,19 @@ Dans le montage d'origine, Jeedom générait sa propre clé (`jeedom::getApiKey(
 
 Quand la clé ne convient pas, la centrale répond **HTTP 200 avec le corps `ERROR 9001`** — jamais un 401 ou un 403. Le plugin détecte ce cas et le signale explicitement dans le journal Homebridge ; le plugin Jeedom d'origine ne le testait pas, ce qui transformait une clé refusée en erreur PHP obscure dans sa boucle cron.
 
-AnB-Rimex ne publie pas la table de ses codes `ERROR`. L'option `--codes` de `tricom-probe` compare les réponses de la centrale à plusieurs clés (absente, trop courte, fausse mais de bonne longueur…) pour déterminer empiriquement ce qu'ils distinguent :
+AnB-Rimex ne publie pas la table de ses codes `ERROR`. L'option `--codes` de `tricom-probe` compare les réponses de la centrale à plusieurs clés (absente, trop courte, fausse mais de bonne longueur…) ainsi qu'à un endpoint inconnu, puis en tire une conclusion :
 
 ```bash
 npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --codes
 ```
 
 Ce mode ne fait que des lectures, rien n'est écrit sur la centrale.
+
+### Ce qu'on sait de `ERROR 9001`
+
+Mesuré sur une centrale réelle : une clé absente, une clé de 4 caractères, et des clés fausses de 50 comme de 64 caractères donnent **toutes le même `ERROR 9001`**. La centrale ne distingue donc ni l'absence de clé ni sa longueur — le code veut simplement dire « clé non reconnue ». La seule correction est de programmer la bonne clé dans TRINITY.
+
+Utile à savoir aussi : un endpoint inconnu (`/jeedom/nimportequoi`) renvoie la page d'accueil du serveur, `<h1>Server start success if you see this message</h1>`, sans vérifier la clé. C'est un test de vie du serveur HTTP qui ne demande aucune clé — si vous obtenez cette page, la centrale est joignable et son serveur tourne.
 
 ## Trouver ses sorties avec `tricom-probe`
 

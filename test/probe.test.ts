@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  diff, dummyKey, flatten, guessType, parseArgs,
-  probeErrorCodes, renderConfig, renderErrorCodes, renderTable,
+  CodeProbeResult, diff, dummyKey, flatten, guessType, interpretErrorCodes,
+  parseArgs, probeErrorCodes, renderConfig, renderErrorCodes, renderTable,
 } from '../src/probe';
 import { startMockTricom, MockTricomServer } from './helpers/tricomServer';
 
@@ -170,22 +170,69 @@ describe('probeErrorCodes', () => {
   });
 });
 
-describe('renderErrorCodes', () => {
-  it('points out when the central answers every case identically', () => {
-    const out = renderErrorCodes([
-      { label: 'a', answer: '200 ERROR 9001' },
-      { label: 'b', answer: '200 ERROR 9001' },
-    ]);
-    expect(out).toMatch(/ne distingue pas ces cas/);
+/**
+ * Reproduces exactly what a real TriCom answered on 2026-09-14: every key
+ * variant refused with the same code, and an unknown route answering with the
+ * server's welcome page.
+ */
+const REAL_CENTRAL: CodeProbeResult[] = [
+  { label: 'clé fournie', kind: 'key', answer: '200 ERROR 9001' },
+  { label: 'clé absente (vide)', kind: 'key', answer: '200 ERROR 9001' },
+  { label: 'clé courte (4 car.)', kind: 'key', answer: '200 ERROR 9001' },
+  { label: 'clé fausse, 50 car.', kind: 'key', answer: '200 ERROR 9001' },
+  { label: 'clé fausse, 64 car.', kind: 'key', answer: '200 ERROR 9001' },
+  {
+    label: 'endpoint inconnu', kind: 'route',
+    answer: '200 <h1>Server start success if you see this message</h1>',
+  },
+];
+
+describe('interpretErrorCodes', () => {
+  it('concludes the server is alive when an unknown route answers normally', () => {
+    expect(interpretErrorCodes(REAL_CENTRAL).join(' ')).toMatch(/serveur HTTP.*bien actif/);
   });
 
-  it('counts the distinct answers when they differ', () => {
-    const out = renderErrorCodes([
-      { label: 'a', answer: '200 {}' },
-      { label: 'b', answer: '200 ERROR 9001' },
-      { label: 'c', answer: '200 ERROR 9002' },
-    ]);
-    expect(out).toMatch(/3 réponses différentes/);
+  it('concludes the code means "key not recognised" when length makes no difference', () => {
+    const notes = interpretErrorCodes(REAL_CENTRAL).join(' ');
+    expect(notes).toMatch(/ERROR 9001/);
+    expect(notes).toMatch(/ne distingue ni l'absence de clé, ni sa taille/);
+    expect(notes).toMatch(/TRINITY/);
+  });
+
+  it('says there is nothing to fix when the supplied key works', () => {
+    const ok: CodeProbeResult[] = [
+      { label: 'clé fournie', kind: 'key', answer: '200 {"1":{"1":255}}' },
+      ...REAL_CENTRAL.slice(1),
+    ];
+    const notes = interpretErrorCodes(ok);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/acceptée/);
+  });
+
+  it('flags that the central distinguishes causes when codes differ', () => {
+    const mixed: CodeProbeResult[] = [
+      { label: 'clé fournie', kind: 'key', answer: '200 ERROR 9001' },
+      { label: 'clé fausse, 64 car.', kind: 'key', answer: '200 ERROR 9002' },
+    ];
+    expect(interpretErrorCodes(mixed).join(' ')).toMatch(/2 codes différents \(9001, 9002\)/);
+  });
+
+  it('does not claim the server is alive when the route test failed too', () => {
+    const dead = REAL_CENTRAL.map(r =>
+      r.kind === 'route' ? { ...r, answer: 'échec réseau : fetch failed' } : r);
+    expect(interpretErrorCodes(dead).join(' ')).not.toMatch(/bien actif/);
+  });
+
+  it('returns nothing for an empty probe', () => {
+    expect(interpretErrorCodes([])).toEqual([]);
+  });
+});
+
+describe('renderErrorCodes', () => {
+  it('prints the table and the conclusion together', () => {
+    const out = renderErrorCodes(REAL_CENTRAL);
+    expect(out).toContain('clé fausse, 64 car.');
+    expect(out).toMatch(/TRINITY/);
   });
 
   it('says plainly that nothing was written', () => {

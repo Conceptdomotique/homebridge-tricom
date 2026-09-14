@@ -226,33 +226,95 @@ export function dummyKey(length: number): string {
  */
 export async function probeErrorCodes(
   opts: Pick<Options, 'ip' | 'port' | 'apikey' | 'timeout'>,
-): Promise<{ label: string; answer: string }[]> {
-  const cases: { label: string; apikey: string; path: string }[] = [
-    { label: 'clé fournie', apikey: opts.apikey, path: '/allExosOutputsValues' },
-    { label: 'clé absente (vide)', apikey: '', path: '/allExosOutputsValues' },
-    { label: 'clé courte (4 car.)', apikey: 'test', path: '/allExosOutputsValues' },
-    { label: 'clé fausse, 50 car.', apikey: dummyKey(50), path: '/allExosOutputsValues' },
-    { label: 'clé fausse, 64 car.', apikey: dummyKey(64), path: '/allExosOutputsValues' },
-    // Un endpoint inconnu avec la bonne clé : distingue « clé refusée »
-    // de « requête refusée ».
-    { label: 'endpoint inconnu', apikey: opts.apikey, path: '/endpointInexistant' },
+): Promise<CodeProbeResult[]> {
+  const cases: { label: string; apikey: string; path: string; kind: CodeProbeKind }[] = [
+    { label: 'clé fournie', apikey: opts.apikey, path: '/allExosOutputsValues', kind: 'key' },
+    { label: 'clé absente (vide)', apikey: '', path: '/allExosOutputsValues', kind: 'key' },
+    { label: 'clé courte (4 car.)', apikey: 'test', path: '/allExosOutputsValues', kind: 'key' },
+    { label: 'clé fausse, 50 car.', apikey: dummyKey(50), path: '/allExosOutputsValues', kind: 'key' },
+    { label: 'clé fausse, 64 car.', apikey: dummyKey(64), path: '/allExosOutputsValues', kind: 'key' },
+    // Un endpoint inconnu avec la clé fournie : distingue « clé refusée »
+    // de « requête refusée », et prouve que le serveur répond.
+    { label: 'endpoint inconnu', apikey: opts.apikey, path: '/endpointInexistant', kind: 'route' },
   ];
 
-  const results: { label: string; answer: string }[] = [];
+  const results: CodeProbeResult[] = [];
   for (const c of cases) {
     const client = new TricomClient(
       opts.ip, opts.port, c.apikey, opts.timeout * 1000, consoleLog as never,
     );
     try {
-      results.push({ label: c.label, answer: (await client.raw(c.path)).slice(0, 60) });
+      results.push({ label: c.label, kind: c.kind, answer: (await client.raw(c.path)).slice(0, 60) });
     } catch (e) {
-      results.push({ label: c.label, answer: `échec réseau : ${(e as Error).message}` });
+      results.push({ label: c.label, kind: c.kind, answer: `échec réseau : ${(e as Error).message}` });
     }
   }
   return results;
 }
 
-export function renderErrorCodes(results: { label: string; answer: string }[]): string {
+export type CodeProbeKind = 'key' | 'route';
+
+export interface CodeProbeResult {
+  label: string;
+  kind: CodeProbeKind;
+  answer: string;
+}
+
+/**
+ * Turns the raw table into a conclusion. Three signals matter:
+ *  - the unknown route answering something other than ERROR means the HTTP
+ *    server is alive and only the keyed endpoints are gated;
+ *  - every key variant giving the same code means the central does not
+ *    distinguish a missing key from a wrong one, nor by length;
+ *  - the supplied key succeeding means there is nothing left to diagnose.
+ */
+export function interpretErrorCodes(results: CodeProbeResult[]): string[] {
+  const keys = results.filter(r => r.kind === 'key');
+  const routes = results.filter(r => r.kind === 'route');
+  if (keys.length === 0) {
+    return [];
+  }
+
+  const errorOf = (answer: string) => /ERROR\s+(\d+)/i.exec(answer)?.[1];
+  const supplied = keys[0];
+  const notes: string[] = [];
+
+  if (!errorOf(supplied.answer) && !supplied.answer.includes('échec réseau')) {
+    notes.push('La clé fournie est acceptée : rien à corriger de ce côté.');
+    return notes;
+  }
+
+  const serverAlive = routes.some(r => !errorOf(r.answer) && !r.answer.includes('échec réseau'));
+  if (serverAlive) {
+    notes.push(
+      'Le serveur HTTP de la centrale est bien actif : un endpoint inconnu répond '
+      + 'normalement. Seuls les endpoints protégés refusent la requête.',
+    );
+  }
+
+  const codes = new Set(keys.map(r => errorOf(r.answer)).filter(Boolean));
+  if (codes.size === 1) {
+    const [code] = [...codes];
+    notes.push(
+      `Les cinq clés testées donnent toutes ERROR ${code}, quelle que soit leur `
+      + 'longueur : la centrale ne distingue ni l\'absence de clé, ni sa taille. '
+      + 'Ce code signifie simplement « clé non reconnue ».',
+    );
+    notes.push(
+      'Il faut donc programmer la clé attendue dans le logiciel TRINITY '
+      + 'd\'AnB-Rimex, côté centrale, puis la reporter dans la configuration.',
+    );
+  } else if (codes.size > 1) {
+    notes.push(
+      `Les clés testées donnent ${codes.size} codes différents (${[...codes].join(', ')}) : `
+      + 'la centrale distingue plusieurs causes de refus — comparez avec les longueurs.',
+    );
+  }
+
+  return notes;
+}
+
+export function renderErrorCodes(results: CodeProbeResult[]): string {
   const lines = [
     '  Cas                    Réponse',
     '  ---                    -------',
@@ -261,14 +323,13 @@ export function renderErrorCodes(results: { label: string; answer: string }[]): 
     lines.push('  ' + r.label.padEnd(22) + ' ' + r.answer);
   }
 
-  const distinct = new Set(results.map(r => r.answer));
   lines.push('');
   lines.push('  Chaque ligne montre le code HTTP suivi du corps de la réponse.');
-  lines.push(
-    distinct.size === 1
-      ? '  Toutes les réponses sont identiques : la centrale ne distingue pas ces cas.'
-      : `  ${distinct.size} réponses différentes : comparez-les pour cerner ce que les codes distinguent.`,
-  );
+  for (const note of interpretErrorCodes(results)) {
+    lines.push('');
+    lines.push('  ' + note);
+  }
+  lines.push('');
   lines.push('  Aucune écriture n\'a été faite sur la centrale.');
   return lines.join('\n');
 }

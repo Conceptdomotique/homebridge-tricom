@@ -38,7 +38,10 @@ const ERROR_BODY = /^\s*ERROR\s+(\d+)\s*$/i;
 export function describeErrorCode(code: number): string {
   switch (code) {
     case 9001:
-      return 'clé API refusée par la centrale — vérifiez la clé saisie dans le logiciel TRINITY';
+      // Vérifié sur une vraie centrale : une clé absente, trop courte, ou
+      // fausse mais de 50 ou 64 caractères donnent toutes ce même code. Il
+      // signifie donc « clé non reconnue », sans distinction de longueur.
+      return 'clé API non reconnue par la centrale — programmez-la dans le logiciel TRINITY d\'AnB-Rimex';
     default:
       return 'code non documenté par AnB-Rimex';
   }

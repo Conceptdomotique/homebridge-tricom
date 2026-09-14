@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Logger } from 'homebridge';
 
-import { TricomClient } from '../src/tricomClient';
+import { TricomClient, TricomServerError, describeErrorCode } from '../src/tricomClient';
 import { createMockLog } from './helpers/hapMock';
 import { startMockTricom, MockTricomServer } from './helpers/tricomServer';
 
@@ -79,5 +79,80 @@ describe('TricomClient', () => {
   it('logs writes at debug level', async () => {
     await client.setOutput(1, 2, 0);
     expect(log.at('debug').some(m => m.includes('exo=1') && m.includes('value=0'))).toBe(true);
+  });
+
+  it('returns the body verbatim through raw(), errors included', async () => {
+    server.requireApikey = 'la-bonne-cle';
+    const answer = await client.raw('/allExosOutputsValues');
+    expect(answer).toBe('200 ERROR 9001');
+  });
+});
+
+/**
+ * The central reports application errors as HTTP 200 with a plain text
+ * "ERROR <code>" body. The Jeedom plugin never checked for this; we must.
+ */
+describe('TricomServerError', () => {
+  let server: MockTricomServer;
+  let client: TricomClient;
+
+  beforeEach(async () => {
+    server = await startMockTricom({ '1': { '1': 255 } });
+    server.requireApikey = 'la-bonne-cle';
+    client = new TricomClient(
+      '127.0.0.1', server.port, 'mauvaise-cle', 2000, createMockLog() as unknown as Logger,
+    );
+  });
+
+  afterEach(async () => {
+    await server.close();
+  });
+
+  it('raises a typed error carrying the code, not a JSON parse failure', async () => {
+    await expect(client.getAllValues()).rejects.toBeInstanceOf(TricomServerError);
+    await expect(client.getAllValues()).rejects.toMatchObject({ code: 9001 });
+  });
+
+  it('never reports a refused key as invalid JSON', async () => {
+    await expect(client.getAllValues()).rejects.not.toThrow(/Invalid JSON/);
+  });
+
+  it('names the failing operation in the message', async () => {
+    await expect(client.getAllValues()).rejects.toThrow(/lecture des sorties/);
+    await expect(client.setOutput(1, 2, 255)).rejects.toThrow(/écriture exo 1 sortie 2/);
+  });
+
+  it('raises on a refused write too, so HomeKit sees the failure', async () => {
+    await expect(client.setOutput(1, 2, 255)).rejects.toBeInstanceOf(TricomServerError);
+  });
+
+  it('succeeds once the right key is used', async () => {
+    const good = new TricomClient(
+      '127.0.0.1', server.port, 'la-bonne-cle', 2000, createMockLog() as unknown as Logger,
+    );
+    await expect(good.getAllValues()).resolves.toEqual({ '1': { '1': 255 } });
+  });
+
+  it('tolerates whitespace and lower case in the error body', async () => {
+    server.requireApikey = undefined;
+    server.failNextWith = { status: 200, body: '  error 42\n' };
+    await expect(client.getAllValues()).rejects.toMatchObject({ code: 42 });
+  });
+
+  it('does not mistake a JSON body mentioning ERROR for an error response', async () => {
+    server.requireApikey = undefined;
+    server.failNextWith = { status: 200, body: '{"1":{"1":0},"ERROR":{"9001":1}}' };
+    await expect(client.getAllValues()).resolves.toHaveProperty('ERROR');
+  });
+});
+
+describe('describeErrorCode', () => {
+  it('explains the code observed on a real central', () => {
+    expect(describeErrorCode(9001)).toMatch(/clé API/);
+    expect(describeErrorCode(9001)).toMatch(/TRINITY/);
+  });
+
+  it('says plainly when a code is undocumented rather than guessing', () => {
+    expect(describeErrorCode(1234)).toMatch(/non documenté/);
   });
 });

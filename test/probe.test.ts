@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { diff, flatten, guessType, parseArgs, renderConfig, renderTable } from '../src/probe';
+import {
+  diff, dummyKey, flatten, guessType, parseArgs,
+  probeErrorCodes, renderConfig, renderErrorCodes, renderTable,
+} from '../src/probe';
+import { startMockTricom, MockTricomServer } from './helpers/tricomServer';
 
 describe('parseArgs', () => {
   it('reads the required connection options', () => {
@@ -15,7 +19,12 @@ describe('parseArgs', () => {
 
   it('recognises the flag options', () => {
     const o = parseArgs(['--ip', '1.2.3.4', '--apikey', 'k', '--watch', '--json']);
-    expect(o).toMatchObject({ watch: true, json: true, config: false });
+    expect(o).toMatchObject({ watch: true, json: true, config: false, codes: false });
+  });
+
+  it('recognises the error-code mapping mode', () => {
+    const o = parseArgs(['--ip', '1.2.3.4', '--apikey', 'k', '--codes']);
+    expect(o).toMatchObject({ codes: true });
   });
 
   it('returns help for -h and --help', () => {
@@ -101,6 +110,86 @@ describe('renderConfig', () => {
   it('guesses a 0-255 scale when the level exceeds 100', () => {
     const parsed = JSON.parse(renderConfig({ '1': { '1': 180 } }));
     expect(parsed.accessories[0].maxValue).toBe(255);
+  });
+});
+
+describe('dummyKey', () => {
+  it('produces a key of exactly the requested length', () => {
+    expect(dummyKey(50)).toHaveLength(50);
+    expect(dummyKey(64)).toHaveLength(64);
+  });
+});
+
+describe('probeErrorCodes', () => {
+  const servers: MockTricomServer[] = [];
+
+  afterEach(async () => {
+    for (const s of servers.splice(0)) {
+      await s.close();
+    }
+  });
+
+  async function probeAgainst(requireApikey: string | undefined, apikey: string) {
+    const server = await startMockTricom({ '1': { '1': 255 } });
+    server.requireApikey = requireApikey;
+    servers.push(server);
+    return probeErrorCodes({ ip: '127.0.0.1', port: server.port, apikey, timeout: 2 });
+  }
+
+  it('tries the supplied key plus several deliberately wrong ones', async () => {
+    const results = await probeAgainst('bonne', 'bonne');
+    expect(results.map(r => r.label)).toEqual([
+      'clé fournie',
+      'clé absente (vide)',
+      'clé courte (4 car.)',
+      'clé fausse, 50 car.',
+      'clé fausse, 64 car.',
+      'endpoint inconnu',
+    ]);
+  });
+
+  it('separates a key the central accepts from ones it refuses', async () => {
+    const results = await probeAgainst('bonne', 'bonne');
+    const byLabel = Object.fromEntries(results.map(r => [r.label, r.answer]));
+    expect(byLabel['clé fournie']).toContain('200 {');
+    expect(byLabel['clé absente (vide)']).toBe('200 ERROR 9001');
+    expect(byLabel['clé fausse, 50 car.']).toBe('200 ERROR 9001');
+  });
+
+  it('reports the refusal for every case when the supplied key is wrong', async () => {
+    const results = await probeAgainst('bonne', 'mauvaise');
+    expect(results.every(r => r.answer.includes('ERROR 9001'))).toBe(true);
+  });
+
+  it('never writes to the central', async () => {
+    const server = await startMockTricom({ '1': { '1': 255 } });
+    servers.push(server);
+    await probeErrorCodes({ ip: '127.0.0.1', port: server.port, apikey: 'k', timeout: 2 });
+    expect(server.requests.every(r => r.path !== '/jeedom/exoOutputValue')).toBe(true);
+    expect(server.values).toEqual({ '1': { '1': 255 } });
+  });
+});
+
+describe('renderErrorCodes', () => {
+  it('points out when the central answers every case identically', () => {
+    const out = renderErrorCodes([
+      { label: 'a', answer: '200 ERROR 9001' },
+      { label: 'b', answer: '200 ERROR 9001' },
+    ]);
+    expect(out).toMatch(/ne distingue pas ces cas/);
+  });
+
+  it('counts the distinct answers when they differ', () => {
+    const out = renderErrorCodes([
+      { label: 'a', answer: '200 {}' },
+      { label: 'b', answer: '200 ERROR 9001' },
+      { label: 'c', answer: '200 ERROR 9002' },
+    ]);
+    expect(out).toMatch(/3 réponses différentes/);
+  });
+
+  it('says plainly that nothing was written', () => {
+    expect(renderErrorCodes([])).toMatch(/Aucune écriture/);
   });
 });
 

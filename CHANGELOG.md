@@ -5,6 +5,19 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Corrigé
+- Les erreurs applicatives de la centrale sont enfin détectées. La TriCom répond `HTTP 200` avec un corps texte `ERROR <code>` — jamais un 401 ou un 403 — si bien qu'une clé API refusée se manifestait par un obscur « Invalid JSON from Tricom ». Le client lève désormais une `TricomServerError` typée portant le code, et le message cite l'opération en échec. (Le plugin Jeedom d'origine ne testait pas ce cas non plus : sa garde `is_json` était inopérante et la clé refusée finissait en erreur PHP dans la boucle cron.)
+- Une écriture refusée par la centrale remonte maintenant comme un échec à HomeKit, au lieu d'être silencieusement ignorée.
+
+### Ajouté
+- `tricom-probe --codes` : compare les réponses de la centrale à plusieurs clés (fournie, absente, trop courte, fausse en 50 et 64 caractères) et à un endpoint inconnu, pour déterminer empiriquement ce que ses codes `ERROR` distinguent — AnB-Rimex n'en publie pas la table. Lectures seules, aucune écriture.
+- Section « La clé API » dans le README : d'où vient la clé, pourquoi elle se saisit dans le logiciel TRINITY d'AnB-Rimex, et la limite historique de 50 caractères.
+
+### Modifié
+- Le premier échec d'interrogation est journalisé en `warn` (et en `error` avec l'explication du code quand la centrale refuse la requête) plutôt qu'en `debug` : une erreur de configuration est visible sans activer le mode debug. Les échecs suivants retombent en `debug` pour ne pas inonder le journal, et le retour de la centrale est signalé.
+
 ## [1.0.0] - 2026-09-14
 
 Première version publiée.

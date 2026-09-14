@@ -9,7 +9,7 @@ import {
 } from 'homebridge';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
-import { TricomClient, ExoValues } from './tricomClient';
+import { TricomClient, ExoValues, TricomServerError, describeErrorCode } from './tricomClient';
 import { TricomOutputAccessory } from './accessory';
 
 export type TricomDeviceType = 'switch' | 'light' | 'dimmer';
@@ -121,14 +121,34 @@ export class TricomPlatform implements DynamicPlatformPlugin {
   }
 
   private async startPolling(): Promise<void> {
+    let failing = false;
+
     const poll = async () => {
       try {
         this.latestValues = await this.client.getAllValues();
+        if (failing) {
+          this.log.info('Tricom central reachable again.');
+          failing = false;
+        }
         for (const handler of this.handlers) {
           handler.updateFromPoll();
         }
       } catch (e) {
-        this.log.debug('Tricom poll failed: ' + (e as Error).message);
+        // Warn once per outage so a misconfiguration is visible without debug
+        // logging, then fall back to debug to avoid flooding the log.
+        if (failing) {
+          this.log.debug('Tricom poll failed: ' + (e as Error).message);
+          return;
+        }
+        failing = true;
+
+        if (e instanceof TricomServerError) {
+          this.log.error(
+            `Tricom refused the request (ERROR ${e.code}): ${describeErrorCode(e.code)}`,
+          );
+        } else {
+          this.log.warn('Tricom poll failed: ' + (e as Error).message);
+        }
       }
     };
 

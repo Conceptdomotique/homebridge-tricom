@@ -188,8 +188,59 @@ describe('polling a central', () => {
     });
     api.emit('didFinishLaunching');
 
-    await vi.waitFor(() => expect(log.at('debug').some(m => m.includes('poll failed'))).toBe(true));
+    // The first failure is a warning, so a misconfiguration is visible
+    // without turning on debug logging.
+    await vi.waitFor(() => expect(log.at('warn').some(m => m.includes('poll failed'))).toBe(true));
     expect(platform.latestValues).toEqual({});
+  });
+
+  it('reports a key refused by the central as an error naming the code', async () => {
+    const server = await startMockTricom({ '1': { '1': 255 } });
+    server.requireApikey = 'la-bonne-cle';
+    openServers.push(server);
+
+    const { api, log } = makePlatform({
+      apikey: 'mauvaise-cle', ip: '127.0.0.1', port: server.port, accessories: [LIGHT],
+    });
+    api.emit('didFinishLaunching');
+
+    await vi.waitFor(() => {
+      expect(log.at('error').some(m => m.includes('9001') && m.includes('TRINITY'))).toBe(true);
+    });
+  });
+
+  it('warns once per outage instead of flooding the log', async () => {
+    const { api, log } = makePlatform({
+      apikey: 'k', ip: '127.0.0.1', port: 1, timeout: 1,
+      pollInterval: 2, accessories: [LIGHT],
+    });
+    api.emit('didFinishLaunching');
+
+    await vi.waitFor(() => expect(log.at('warn').length).toBe(1));
+    await new Promise(r => setTimeout(r, 250));
+    expect(log.at('warn').filter(m => m.includes('poll failed'))).toHaveLength(1);
+  });
+
+  it('says so when the central comes back', async () => {
+    const server = await startMockTricom({ '1': { '1': 0 } });
+    server.requireApikey = 'la-bonne-cle';
+    openServers.push(server);
+
+    const { api, log } = makePlatform({
+      apikey: 'la-bonne-cle', ip: '127.0.0.1', port: server.port,
+      pollInterval: 2, accessories: [LIGHT],
+    });
+
+    // Fail the first poll, then let the key through again.
+    server.requireApikey = 'autre-chose';
+    api.emit('didFinishLaunching');
+    await vi.waitFor(() => expect(log.at('error').length).toBeGreaterThan(0));
+
+    server.requireApikey = 'la-bonne-cle';
+    await vi.waitFor(
+      () => expect(log.at('info').some(m => m.includes('reachable again'))).toBe(true),
+      { timeout: 5000 },
+    );
   });
 
   it('stops polling on shutdown', async () => {

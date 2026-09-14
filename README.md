@@ -30,6 +30,22 @@ npm install
 npm run build
 ```
 
+## La clé API
+
+La clé n'est pas générée par ce plugin : c'est un **secret partagé** que la centrale vérifie à chaque requête. Elle se saisit côté centrale, dans le logiciel de programmation **TRINITY** d'AnB-Rimex. Vous mettez ensuite la même valeur dans `apikey`.
+
+Dans le montage d'origine, Jeedom générait sa propre clé (`jeedom::getApiKey()`, 64 caractères) et l'installateur la recopiait dans TRINITY. Sans Jeedom, c'est vous qui choisissez la valeur. Le champ de TRINITY a été limité à 50 caractères jusqu'à une mise à jour de janvier 2023 — en cas de doute, restez sur 50.
+
+Quand la clé ne convient pas, la centrale répond **HTTP 200 avec le corps `ERROR 9001`** — jamais un 401 ou un 403. Le plugin détecte ce cas et le signale explicitement dans le journal Homebridge ; le plugin Jeedom d'origine ne le testait pas, ce qui transformait une clé refusée en erreur PHP obscure dans sa boucle cron.
+
+AnB-Rimex ne publie pas la table de ses codes `ERROR`. L'option `--codes` de `tricom-probe` compare les réponses de la centrale à plusieurs clés (absente, trop courte, fausse mais de bonne longueur…) pour déterminer empiriquement ce qu'ils distinguent :
+
+```bash
+npx tricom-probe --ip 192.168.1.50 --apikey VOTRE_CLE --codes
+```
+
+Ce mode ne fait que des lectures, rien n'est écrit sur la centrale.
+
 ## Trouver ses sorties avec `tricom-probe`
 
 Le plugin ne peut pas découvrir les équipements tout seul : la centrale n'expose pas de liste, il faut déclarer chaque sortie à la main. L'outil `tricom-probe`, installé avec le plugin, sert à repérer quelle sortie correspond à quel équipement.
@@ -151,6 +167,7 @@ Pour les **variateurs**, la correspondance entre le pourcentage de luminosité H
 
 | Symptôme | Piste |
 | --- | --- |
+| `ERROR 9001` dans le journal, ou au lancement de `tricom-probe` | La centrale refuse la clé API. Vérifiez la valeur saisie dans TRINITY, et sa longueur (50 caractères si TRINITY n'est pas à jour). |
 | Les accessoires restent « Sans réponse » dans HomeKit | La centrale est injoignable ou la clé API est refusée. Vérifiez avec `tricom-probe` : il utilise exactement les mêmes appels que le plugin. |
 | Un accessoire ne réagit pas | Mauvais couple adresse EXO / numéro de sortie. Utilisez `--watch` et actionnez l'équipement pour retrouver le bon. |
 | Un variateur saute à 100 % dès qu'on le bouge | L'échelle ne correspond pas. Essayez `maxValue: 255` (ou testez avec `--set`). |

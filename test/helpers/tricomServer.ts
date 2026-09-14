@@ -14,6 +14,8 @@ export interface MockTricomServer {
   values: Record<string, Record<string, number>>;
   /** Force the next response (status / body), bypassing normal handling. */
   failNextWith?: { status: number; body: string };
+  /** Reject every request whose apikey is not this one, as the real central does. */
+  requireApikey?: string;
   /** Delay every response by this many ms (to exercise timeouts). */
   delayMs: number;
   close(): Promise<void>;
@@ -49,6 +51,14 @@ export async function startMockTricom(
         state.failNextWith = undefined;
         res.writeHead(status, { 'Content-Type': 'text/plain' });
         res.end(body);
+        return;
+      }
+
+      // The real central answers a refused key with HTTP 200 and a plain
+      // text "ERROR <code>" body, never a 4xx status.
+      if (state.requireApikey !== undefined && query.apikey !== state.requireApikey) {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ERROR 9001');
         return;
       }
 

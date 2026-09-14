@@ -14,7 +14,7 @@
  *   tricom-probe ... --set 1:2=255    écrit une valeur sur une sortie
  */
 
-import { TricomClient, ExoValues } from './tricomClient';
+import { TricomClient, ExoValues, TricomServerError, describeErrorCode } from './tricomClient';
 
 interface Options {
   ip: string;
@@ -24,6 +24,7 @@ interface Options {
   watch: boolean;
   config: boolean;
   json: boolean;
+  codes: boolean;
   set?: { exo: string; output: string; value: number };
   interval: number;
 }
@@ -43,12 +44,15 @@ Options :
   --watch               Suit les changements en direct (Ctrl+C pour quitter)
   --config              Affiche un bloc "accessories" prêt à coller
   --json                Sort le JSON brut de la centrale
+  --codes               Compare les réponses de la centrale à plusieurs clés,
+                        pour identifier ce que signifient ses codes ERROR
   --set <exo:sortie=v>  Écrit une valeur, puis relit l'état
   -h, --help            Affiche cette aide
 
 Exemples :
   tricom-probe --ip 192.168.1.50 --apikey ABC123
   tricom-probe --ip 192.168.1.50 --apikey ABC123 --watch
+  tricom-probe --ip 192.168.1.50 --apikey ABC123 --codes
   tricom-probe --ip 192.168.1.50 --apikey ABC123 --set 1:2=255
 `.trim();
 
@@ -65,7 +69,7 @@ const consoleLog = {
 export function parseArgs(argv: string[]): Options | 'help' {
   const opts: Options = {
     ip: '', port: 9000, apikey: '', timeout: 5,
-    watch: false, config: false, json: false, interval: 1,
+    watch: false, config: false, json: false, codes: false, interval: 1,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -99,6 +103,9 @@ export function parseArgs(argv: string[]): Options | 'help' {
         break;
       case '--json':
         opts.json = true;
+        break;
+      case '--codes':
+        opts.codes = true;
         break;
       case '--set': {
         const spec = next();
@@ -201,6 +208,71 @@ export function diff(previous: ExoValues, current: ExoValues): string[] {
   return changes;
 }
 
+/** Une clé factice de longueur donnée, pour distinguer « clé fausse » de « clé trop longue ». */
+export function dummyKey(length: number): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let s = '';
+  while (s.length < length) {
+    s += chars[s.length % chars.length];
+  }
+  return s;
+}
+
+/**
+ * AnB-Rimex ne publie pas la table des codes ERROR de la TriCom. Ce mode
+ * compare les réponses de la centrale à plusieurs clés de longueurs et de
+ * validités différentes : si les codes diffèrent, on apprend ce qu'ils
+ * distinguent. Lectures uniquement — rien n'est écrit sur la centrale.
+ */
+export async function probeErrorCodes(
+  opts: Pick<Options, 'ip' | 'port' | 'apikey' | 'timeout'>,
+): Promise<{ label: string; answer: string }[]> {
+  const cases: { label: string; apikey: string; path: string }[] = [
+    { label: 'clé fournie', apikey: opts.apikey, path: '/allExosOutputsValues' },
+    { label: 'clé absente (vide)', apikey: '', path: '/allExosOutputsValues' },
+    { label: 'clé courte (4 car.)', apikey: 'test', path: '/allExosOutputsValues' },
+    { label: 'clé fausse, 50 car.', apikey: dummyKey(50), path: '/allExosOutputsValues' },
+    { label: 'clé fausse, 64 car.', apikey: dummyKey(64), path: '/allExosOutputsValues' },
+    // Un endpoint inconnu avec la bonne clé : distingue « clé refusée »
+    // de « requête refusée ».
+    { label: 'endpoint inconnu', apikey: opts.apikey, path: '/endpointInexistant' },
+  ];
+
+  const results: { label: string; answer: string }[] = [];
+  for (const c of cases) {
+    const client = new TricomClient(
+      opts.ip, opts.port, c.apikey, opts.timeout * 1000, consoleLog as never,
+    );
+    try {
+      results.push({ label: c.label, answer: (await client.raw(c.path)).slice(0, 60) });
+    } catch (e) {
+      results.push({ label: c.label, answer: `échec réseau : ${(e as Error).message}` });
+    }
+  }
+  return results;
+}
+
+export function renderErrorCodes(results: { label: string; answer: string }[]): string {
+  const lines = [
+    '  Cas                    Réponse',
+    '  ---                    -------',
+  ];
+  for (const r of results) {
+    lines.push('  ' + r.label.padEnd(22) + ' ' + r.answer);
+  }
+
+  const distinct = new Set(results.map(r => r.answer));
+  lines.push('');
+  lines.push('  Chaque ligne montre le code HTTP suivi du corps de la réponse.');
+  lines.push(
+    distinct.size === 1
+      ? '  Toutes les réponses sont identiques : la centrale ne distingue pas ces cas.'
+      : `  ${distinct.size} réponses différentes : comparez-les pour cerner ce que les codes distinguent.`,
+  );
+  lines.push('  Aucune écriture n\'a été faite sur la centrale.');
+  return lines.join('\n');
+}
+
 async function main(): Promise<number> {
   let opts: Options | 'help';
   try {
@@ -213,6 +285,12 @@ async function main(): Promise<number> {
 
   if (opts === 'help') {
     console.log(USAGE);
+    return 0;
+  }
+
+  if (opts.codes) {
+    console.log(`Centrale http://${opts.ip}:${opts.port} — comparaison des réponses\n`);
+    console.log(renderErrorCodes(await probeErrorCodes(opts)));
     return 0;
   }
 
@@ -278,8 +356,18 @@ if (require.main === module) {
   main()
     .then(code => process.exit(code))
     .catch(e => {
-      console.error(`Échec : ${(e as Error).message}`);
-      console.error('Vérifiez l\'adresse IP, le port et la clé API.');
+      if (e instanceof TricomServerError) {
+        console.error(`La centrale a refusé la requête : ERROR ${e.code}`);
+        console.error(`→ ${describeErrorCode(e.code)}`);
+        console.error('');
+        console.error('La clé API se saisit côté centrale, dans le logiciel de');
+        console.error('programmation TRINITY d\'AnB-Rimex — ce n\'est pas le plugin qui');
+        console.error('la génère. Utilisez --codes pour comparer les réponses de la');
+        console.error('centrale à plusieurs clés et cerner ce que le code signifie.');
+      } else {
+        console.error(`Échec : ${(e as Error).message}`);
+        console.error('Vérifiez l\'adresse IP, le port et la clé API.');
+      }
       process.exit(1);
     });
 }
